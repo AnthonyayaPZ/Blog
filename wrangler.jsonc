@@ -1,0 +1,5 @@
+{
+  "name": "blog-notion-worker",
+  "main": "scripts/index.js",
+  "compatibility_date": "2026-03-28"
+}
