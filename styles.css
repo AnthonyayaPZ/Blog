@@ -93,6 +93,13 @@ nav {
   flex-shrink: 0;
 }
 
+.nav-search-static {
+  min-width: 120px;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .hero {
   position: relative;
   height: 420px;
@@ -384,10 +391,6 @@ nav {
 }
 
 .page {
-  display: none;
-}
-
-.page.active {
   display: block;
 }
 
@@ -598,6 +601,7 @@ nav {
   padding: 8px 0;
   margin-bottom: 8px;
   transition: color 0.2s;
+  text-decoration: none;
 }
 
 .back-btn:hover {

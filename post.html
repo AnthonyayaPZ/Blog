@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文章详情 | 霙樱怪的个人博客</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;700&family=Noto+Sans+SC:wght@300;400;500&family=Playfair+Display:ital,wght@0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-page="post">
+    <nav>
+      <a class="nav-logo" href="./index.html">霙樱怪的个人博客</a>
+      <div class="nav-links">
+        <a href="./index.html">主页</a>
+      </div>
+      <div class="nav-search nav-search-static">
+        <span>文章详情</span>
+      </div>
+    </nav>
+
+    <div class="article-page-shell">
+      <div class="article-hero">
+        <div class="article-hero-art"></div>
+        <div class="article-hero-overlay"></div>
+        <div class="article-hero-content" id="article-hero-content"></div>
+      </div>
+
+      <div class="article-body">
+        <aside class="article-sidebar">
+          <div class="catalog-title">— CATALOG</div>
+          <ul class="catalog-list" id="catalog-list"></ul>
+        </aside>
+        <article class="article-content" id="article-content"></article>
+      </div>
+    </div>
+
+    <footer class="footer">© 2026 霙樱怪的个人博客 · 保留所有权利</footer>
+
+    <script src="./site.config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

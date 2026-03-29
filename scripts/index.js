@@ -12,6 +12,19 @@ export default {
 
     const url = new URL(request.url);
 
+    // 统一的 Notion 请求头
+    const notionHeaders = {
+      'Authorization': `Bearer ${env.NOTION_TOKEN}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json',
+    };
+
+    // 解析 Tags 字段的统一方法，支持 | 和 , 分隔
+    function parseTags(raw) {
+      if (!raw) return [];
+      return raw.split(/[|,]/).map(t => t.trim()).filter(Boolean);
+    }
+
     // GET / → 健康检查
     if (url.pathname === '/') {
       return new Response(
@@ -20,38 +33,30 @@ export default {
       );
     }
 
-    // GET /db → 获取数据库自身的名字
+    // GET /db → 数据库名
     if (url.pathname === '/db') {
       const res = await fetch(
         `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${env.NOTION_TOKEN}`,
-            'Notion-Version': '2022-06-28',
-          },
-        }
+        { headers: notionHeaders }
       );
       const data = await res.json();
-      if (!res.ok) {
-        return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
-      }
-      // 数据库名字在 title 数组里
-      const dbName = data.title?.[0]?.plain_text ?? '未命名数据库';
-      return new Response(JSON.stringify({ name: dbName }), { headers: cors });
+      if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
+      return new Response(
+        JSON.stringify({ name: data.title?.[0]?.plain_text ?? '未命名' }),
+        { headers: cors }
+      );
     }
 
-    // GET /posts → 获取所有条目的名字 + 创建日期
+    // GET /posts?tag=关键字&category=分类 → 文章列表，支持过滤
     if (url.pathname === '/posts') {
+      const filterTag = url.searchParams.get('tag') ?? '';
+      const filterCategory = url.searchParams.get('category') ?? '';
+
       const res = await fetch(
         `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}/query`,
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${env.NOTION_TOKEN}`,
-            'Notion-Version': '2022-06-28',
-            'Content-Type': 'application/json',
-          },
+          headers: notionHeaders,
           body: JSON.stringify({
             sorts: [{ timestamp: 'created_time', direction: 'descending' }],
             page_size: 100,
@@ -59,38 +64,135 @@ export default {
         }
       );
       const data = await res.json();
-      if (!res.ok) {
-        return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
-      }
+      if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
 
-      const posts = data.results.map(page => ({
+      let posts = data.results.map(page => ({
         id: page.id,
-        // ↓ 对应你的 Name 字段（Title 类型）
         name: page.properties.Name?.title?.[0]?.plain_text ?? '无标题',
-        // ↓ Created time 是系统字段，从顶层取
         created_time: page.created_time,
+        category: page.properties.Category?.select?.name ?? '',
+        tags: parseTags(page.properties.Tags?.rich_text?.[0]?.plain_text),
       }));
+
+      if (filterTag) {
+        posts = posts.filter(p =>
+          p.tags.some(t => t.toLowerCase().includes(filterTag.toLowerCase()))
+        );
+      }
+      if (filterCategory) {
+        posts = posts.filter(p => p.category === filterCategory);
+      }
 
       return new Response(JSON.stringify(posts), { headers: cors });
     }
 
-    // GET /posts/:id → 获取单篇正文块
-    const match = url.pathname.match(/^\/posts\/(.+)$/);
-    if (match) {
+    // GET /tags → 全部标签及出现频次
+    if (url.pathname === '/tags') {
       const res = await fetch(
-        `https://api.notion.com/v1/blocks/${match[1]}/children`,
+        `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}/query`,
         {
-          headers: {
-            'Authorization': `Bearer ${env.NOTION_TOKEN}`,
-            'Notion-Version': '2022-06-28',
-          },
+          method: 'POST',
+          headers: notionHeaders,
+          body: JSON.stringify({ page_size: 100 }),
         }
       );
       const data = await res.json();
-      if (!res.ok) {
-        return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
+      if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
+
+      const freq = {};
+      for (const page of data.results) {
+        const tags = parseTags(page.properties.Tags?.rich_text?.[0]?.plain_text);
+        for (const tag of tags) {
+          freq[tag] = (freq[tag] ?? 0) + 1;
+        }
       }
-      return new Response(JSON.stringify(data.results), { headers: cors });
+
+      const sorted = Object.entries(freq)
+        .sort((a, b) => b[1] - a[1])
+        .map(([tag, count]) => ({ tag, count }));
+
+      return new Response(JSON.stringify(sorted), { headers: cors });
+    }
+
+    // GET /graph → 知识图谱节点和边（标签共现关系）
+    if (url.pathname === '/graph') {
+      const res = await fetch(
+        `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}/query`,
+        {
+          method: 'POST',
+          headers: notionHeaders,
+          body: JSON.stringify({ page_size: 100 }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
+
+      const freq = {};
+      const coOccurrence = {};
+
+      for (const page of data.results) {
+        const tags = parseTags(page.properties.Tags?.rich_text?.[0]?.plain_text);
+        for (const tag of tags) {
+          freq[tag] = (freq[tag] ?? 0) + 1;
+        }
+        for (let i = 0; i < tags.length; i++) {
+          for (let j = i + 1; j < tags.length; j++) {
+            const key = [tags[i], tags[j]].sort().join('|||');
+            coOccurrence[key] = (coOccurrence[key] ?? 0) + 1;
+          }
+        }
+      }
+
+      const nodes = Object.entries(freq).map(([id, weight]) => ({ id, weight }));
+      const edges = Object.entries(coOccurrence).map(([key, weight]) => {
+        const [source, target] = key.split('|||');
+        return { source, target, weight };
+      });
+
+      return new Response(JSON.stringify({ nodes, edges }), { headers: cors });
+    }
+
+    // GET /posts/:id           → 仅正文块
+    // GET /posts/:id?full=true → 元数据 + 正文块
+    const match = url.pathname.match(/^\/posts\/(.+)$/);
+    if (match) {
+      const pageId = match[1];
+      const full = url.searchParams.get('full') === 'true';
+
+      if (!full) {
+        const res = await fetch(
+          `https://api.notion.com/v1/blocks/${pageId}/children`,
+          { headers: notionHeaders }
+        );
+        const data = await res.json();
+        if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
+        return new Response(JSON.stringify(data.results), { headers: cors });
+      }
+
+      // full=true：并发请求元数据 + 正文块
+      const [pageRes, blocksRes] = await Promise.all([
+        fetch(`https://api.notion.com/v1/pages/${pageId}`, { headers: notionHeaders }),
+        fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, { headers: notionHeaders }),
+      ]);
+
+      const [pageData, blocksData] = await Promise.all([
+        pageRes.json(),
+        blocksRes.json(),
+      ]);
+
+      if (!pageRes.ok) return new Response(JSON.stringify({ error: pageData }), { status: 502, headers: cors });
+      if (!blocksRes.ok) return new Response(JSON.stringify({ error: blocksData }), { status: 502, headers: cors });
+
+      return new Response(JSON.stringify({
+        meta: {
+          id: pageId,
+          name: pageData.properties.Name?.title?.[0]?.plain_text ?? '无标题',
+          created_time: pageData.created_time,
+          category: pageData.properties.Category?.select?.name ?? '',
+          tags: parseTags(pageData.properties.Tags?.rich_text?.[0]?.plain_text),
+        },
+        blocks: blocksData.results,
+      }), { headers: cors });
     }
 
     return new Response(JSON.stringify({ error: 'Not found' }), {

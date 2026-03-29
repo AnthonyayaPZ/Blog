@@ -1,40 +1,82 @@
 # 个人博客网站
 
-这个项目保留了 `blog.html` 的视觉风格，但当前真实数据来源已经对齐到 `scripts/index.js` 这版 Cloudflare Worker。
+本仓库包含一个基于静态页面的个人博客前端，以及一个通过 Cloudflare Worker 读取 Notion Database 内容的服务端实现。
 
-也就是说，现在网页读取的不是之前那套自定义 `/api/posts` 结构，而是：
+当前博客采用以下运行方式：
 
-- `GET /`：健康检查
-- `GET /db`：返回 Notion 数据库名称
-- `GET /posts`：返回 Notion 数据库中的条目列表
-- `GET /posts/:id`：返回对应页面的正文 block
+- 静态页面负责展示首页与文章详情页
+- Cloudflare Worker 负责提供文章列表与正文内容接口
+- Notion 作为内容管理来源
 
-## 当前文件结构
+## 项目结构
 
-- `index.html`：页面结构
-- `styles.css`：页面样式
-- `app.js`：前端逻辑，直接读取 `scripts/index.js` 暴露的接口
-- `site.config.js`：前端接口地址配置
-- `scripts/index.js`：Cloudflare Worker 入口
-- `scripts/test-worker.mjs`：测试 Worker 返回内容的脚本
-- `wrangler.jsonc`：Wrangler 配置
+- [index.html](/Users/lipeizhang/Downloads/code/vibe/Blog/index.html)：博客首页
+- [post.html](/Users/lipeizhang/Downloads/code/vibe/Blog/post.html)：文章详情页
+- [styles.css](/Users/lipeizhang/Downloads/code/vibe/Blog/styles.css)：页面样式
+- [app.js](/Users/lipeizhang/Downloads/code/vibe/Blog/app.js)：前端渲染逻辑
+- [site.config.js](/Users/lipeizhang/Downloads/code/vibe/Blog/site.config.js)：前端接口地址配置
+- [scripts/index.js](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/index.js)：Cloudflare Worker 入口
+- [scripts/test-worker.mjs](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/test-worker.mjs)：Worker 返回内容测试脚本
+- [wrangler.jsonc](/Users/lipeizhang/Downloads/code/vibe/Blog/wrangler.jsonc)：Wrangler 配置文件
 
-## 当前 Worker 的接口结构
+## 架构说明
 
-### 1. `GET /`
+本项目采用“静态前端 + Worker 接口 + Notion 内容源”的结构。
 
-用于健康检查。
+运行流程如下：
+
+1. 浏览器访问静态页面
+2. 前端请求 Cloudflare Worker 接口
+3. Worker 使用 Notion Integration 访问 Notion API
+4. Worker 返回文章列表、标签统计或完整文章详情数据
+5. 前端将返回内容渲染为博客页面
+
+前端不会直接请求 Notion API，因此不会在浏览器中暴露 Notion token。
+
+## 当前页面结构
+
+### 首页
+
+[index.html](/Users/lipeizhang/Downloads/code/vibe/Blog/index.html) 用于展示文章列表。
+
+首页会请求：
+
+- `GET /posts`
+
+每篇文章都会生成一个独立链接，形式如下：
+
+```text
+post.html?id=<page-id>
+```
+
+### 文章详情页
+
+[post.html](/Users/lipeizhang/Downloads/code/vibe/Blog/post.html) 用于展示单篇文章内容。
+
+详情页会从 URL 中读取 `id` 参数，并请求：
+
+- `GET /posts/:id?full=true`
+
+因此，当前博客中的每篇文章都拥有独立的页面地址，而不是在首页中以内联方式展开。
+
+## Worker 接口说明
+
+当前 Worker 实现位于 [scripts/index.js](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/index.js)，公开提供以下接口。
+
+### `GET /`
+
+健康检查接口。
 
 示例返回：
 
 ```json
 {
   "status": "ok",
-  "timestamp": "2026-03-28T07:00:00.000Z"
+  "timestamp": "2026-03-29T00:00:00.000Z"
 }
 ```
 
-### 2. `GET /db`
+### `GET /db`
 
 返回 Notion 数据库名称。
 
@@ -42,217 +84,190 @@
 
 ```json
 {
-  "name": "我的博客数据库"
+  "name": "个人博客数据库"
 }
 ```
 
-### 3. `GET /posts`
+### `GET /posts`
 
-返回数据库中的条目列表。
+返回 Notion 数据库中的页面列表，并支持按标签与分类过滤。
 
-当前 `scripts/index.js` 里实际返回的字段只有：
+可选查询参数：
+
+- `tag`
+- `category`
+
+当前返回结构如下：
 
 ```json
 [
   {
     "id": "page-id",
     "name": "文章标题",
-    "created_time": "2026-03-28T06:00:00.000Z"
+    "created_time": "2026-03-29T00:00:00.000Z",
+    "category": "随笔杂谈",
+    "tags": ["阅读", "随笔"]
   }
 ]
 ```
 
 字段说明：
 
-- `id`
-  Notion page id，后续用于请求单篇文章正文
+- `id`：Notion 页面 ID，用于请求正文
+- `name`：文章标题，来自数据库中的 `Name` 字段
+- `created_time`：页面创建时间，来自 Notion page 顶层字段
+- `category`：文章分类，来自数据库中的 `Category` 字段
+- `tags`：文章标签列表，来自数据库中的 `Tags` 字段
 
-- `name`
-  来自数据库中的 `Name` 字段
+### `GET /tags`
 
-- `created_time`
-  Notion 页面系统创建时间，来自 page 顶层字段，不是数据库自定义 property
+返回所有标签及其出现频次。
 
-### 4. `GET /posts/:id`
+### `GET /graph`
 
-返回单篇文章的正文 blocks。
+返回基于标签共现关系生成的图谱节点和边数据。
 
-返回的是 Notion 原始 block 数组，例如：
+### `GET /posts/:id`
+
+默认返回指定 Notion 页面的一层正文 block 数据。
+
+当请求带有 `full=true` 参数时，返回完整文章元数据和正文 block。
+
+`GET /posts/:id?full=true` 示例返回：
 
 ```json
-[
-  {
-    "object": "block",
-    "id": "block-id",
-    "type": "heading_2",
-    "heading_2": {
-      "rich_text": [
-        {
-          "plain_text": "一、引言"
-        }
-      ]
-    }
+{
+  "meta": {
+    "id": "page-id",
+    "name": "文章标题",
+    "created_time": "2026-03-29T00:00:00.000Z",
+    "category": "随笔杂谈",
+    "tags": ["阅读", "随笔"]
   },
-  {
-    "object": "block",
-    "id": "block-id-2",
-    "type": "paragraph",
-    "paragraph": {
-      "rich_text": [
-        {
-          "plain_text": "正文内容"
-        }
-      ]
+  "blocks": [
+    {
+      "object": "block",
+      "id": "block-id",
+      "type": "heading_2",
+      "heading_2": {
+        "rich_text": [
+          {
+            "plain_text": "一、引言"
+          }
+        ]
+      }
     }
-  }
-]
+  ]
+}
 ```
 
-## Notion 数据库当前要求的数据格式
+## Notion 数据库要求
 
-按照 `scripts/index.js` 当前写法，数据库至少需要下面这些内容：
+根据当前 [scripts/index.js](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/index.js) 的实现，Notion 数据库至少应满足以下要求。
 
-### 必需内容
+### 必需字段
 
-- 数据库里必须存在 `Name` 字段
+- `Name`
   类型：`Title`
 
-因为代码里是这样取的：
+当前 Worker 中的标题读取方式如下：
 
 ```js
 page.properties.Name?.title?.[0]?.plain_text
 ```
 
-如果你的 Notion 数据库没有 `Name` 这个字段，或者它不是 `Title` 类型，`/posts` 就拿不到文章标题。
+因此：
 
-### 不需要你手动建的内容
+- 若字段名称不是 `Name`
+- 或该字段不是 `Title` 类型
 
-- `created_time`
-  这是 Notion 的系统字段，不是你自己创建的 property
-  代码里通过：
+则文章标题将无法被正确读取。
+
+### 正文来源
+
+正文内容不通过数据库自定义字段返回，而是直接读取每个页面的 block 内容。
+
+当前正文来源为：
+
+```text
+GET /v1/blocks/{page_id}/children
+```
+
+这意味着文章正文应直接编写在 Notion 页面本体中，而不是单独保存在某个文本字段里。
+
+### 系统字段
+
+当前代码还使用了 Notion page 顶层的系统创建时间：
 
 ```js
 page.created_time
 ```
 
-直接从 page 顶层读取。
+该值不是数据库自定义 property，无需手动创建。
 
-### 正文内容
+## Notion 字段调整后的代码同步方式
 
-正文不通过数据库 property 存储，而是直接写在每个 Notion 页面中。  
-`GET /posts/:id` 会通过：
+若 Notion 数据库中的字段名称、字段类型或字段结构发生变化，需同步修改 [scripts/index.js](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/index.js) 中的字段映射逻辑。
 
-```js
-GET /v1/blocks/{page_id}/children
-```
-
-读取页面正文 block。
-
-## 如果你在 Notion 数据库里修改了 property，代码要怎么同步
-
-这是最关键的部分。
-
-### 当前代码的 property 映射位置
-
-需要修改的地方在 [scripts/index.js](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/index.js) 里的 `/posts` 路由：
+当前列表接口中的主要映射位置如下：
 
 ```js
 const posts = data.results.map(page => ({
   id: page.id,
   name: page.properties.Name?.title?.[0]?.plain_text ?? '无标题',
   created_time: page.created_time,
+  category: page.properties.Category?.select?.name ?? '',
+  tags,
 }));
 ```
 
-也就是说，前端能拿到哪些字段，完全取决于这里返回了什么。
+### 场景一：标题字段重命名
 
-### 场景 1：你把 `Name` 改名了
-
-比如你在 Notion 里把标题字段从 `Name` 改成了 `Title`，那么这里：
+若将 Notion 中的标题字段从 `Name` 改为 `Title`，则需将：
 
 ```js
 page.properties.Name
 ```
 
-就必须改成：
+修改为：
 
 ```js
 page.properties.Title
 ```
 
-否则标题会变成 `无标题`。
+否则标题将退化为默认值 `无标题`。
 
-### 场景 2：你新增了分类字段
+### 场景二：分类字段变更
 
-比如你在数据库里增加了：
-
-- `Category`
-  类型：`Select`
-
-那就要在 `/posts` 的返回结构里加上：
+当前代码使用：
 
 ```js
-category: page.properties.Category?.select?.name ?? '',
+page.properties.Category?.select?.name ?? ''
 ```
 
-完整例子：
+若 `Category` 的字段名或类型发生变化，需要同步修改这段映射逻辑。
+
+### 场景三：标签字段变更
+
+当前代码默认 `Tags` 为一个使用逗号分隔的 `Rich text` 字段，并通过以下方式解析：
 
 ```js
-const posts = data.results.map(page => ({
-  id: page.id,
-  name: page.properties.Name?.title?.[0]?.plain_text ?? '无标题',
-  category: page.properties.Category?.select?.name ?? '',
-  created_time: page.created_time,
-}));
+const rawTags = page.properties.Tags?.rich_text?.[0]?.plain_text ?? '';
+const tags = rawTags
+  .split(',')
+  .map(t => t.trim())
+  .filter(Boolean);
 ```
 
-然后前端 [app.js](/Users/lipeizhang/Downloads/code/vibe/Blog/app.js) 才能读取并渲染这个字段。
+若 `Tags` 改为其他字段名或其他类型，也需要同步修改解析逻辑。
 
-### 场景 3：你新增了摘要字段
+### 说明
 
-比如数据库新增：
+一旦 Worker 返回结构发生变化，前端 [app.js](/Users/lipeizhang/Downloads/code/vibe/Blog/app.js) 中相应的渲染逻辑也应同步更新，以确保新增字段可以被页面正确展示。
 
-- `Excerpt`
-  类型：`Rich text`
+## 前端正文渲染能力
 
-就需要在 Worker 中增加：
-
-```js
-excerpt: page.properties.Excerpt?.rich_text?.[0]?.plain_text ?? '',
-```
-
-### 场景 4：你新增了标签字段
-
-比如数据库新增：
-
-- `Tags`
-  类型：`Multi-select`
-
-则需要在 Worker 中增加：
-
-```js
-tags: page.properties.Tags?.multi_select?.map(tag => tag.name) ?? [],
-```
-
-### 总结一句话
-
-Notion 数据库 property 一旦改名、删掉、换类型，`scripts/index.js` 里的 `page.properties.xxx` 就必须同步修改。  
-否则 Worker 虽然还能跑，但返回的数据会缺字段、空字段，前端也就显示不出来。
-
-## 当前网页是如何接入现有博客的
-
-当前前端已经改成直接兼容这版 Worker：
-
-- 首页请求 `/posts`
-- 页面会把 `name` 当标题、`created_time` 当日期
-- 点击文章后，请求 `/posts/:id`
-- 前端把 Notion blocks 转成页面里的标题、段落和引用
-
-也就是说，你现在 Notion 数据库里已有的页面条目，已经可以直接显示到网页上。
-
-## 当前前端支持的正文 block
-
-在 [app.js](/Users/lipeizhang/Downloads/code/vibe/Blog/app.js) 里，当前会把这些 block 渲染出来：
+当前前端会将 Notion blocks 转换为博客正文内容，并支持以下 block 类型：
 
 - `heading_1`
 - `heading_2`
@@ -263,55 +278,13 @@ Notion 数据库 property 一旦改名、删掉、换类型，`scripts/index.js`
 - `numbered_list_item`
 - `callout`
 
-未支持的 block 会被忽略。
+未包含在上述列表中的 block 类型，当前版本不会渲染。
 
-## 如何测试 Worker 返回内容
+## 接口地址配置
 
-已经有测试脚本：[scripts/test-worker.mjs](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/test-worker.mjs)
+前端通过 [site.config.js](/Users/lipeizhang/Downloads/code/vibe/Blog/site.config.js) 指定 Worker 地址。
 
-运行：
-
-```bash
-node scripts/test-worker.mjs https://你的-worker.workers.dev
-```
-
-它会：
-
-1. 请求 `/posts`
-2. 打印返回的文章列表
-3. 自动取第一篇文章的 `id`
-4. 再请求 `/posts/:id`
-5. 打印正文 block 类型
-
-## site.config.js 配置
-
-前端 API 地址通过 [site.config.js](/Users/lipeizhang/Downloads/code/vibe/Blog/site.config.js) 配置：
-
-```js
-window.BLOG_CONFIG = {
-  apiBase: ""
-};
-```
-
-### 同域部署
-
-如果网页和 Worker 在同一个域名下：
-
-```js
-window.BLOG_CONFIG = {
-  apiBase: ""
-};
-```
-
-### Worker 单独域名
-
-如果 Worker 部署在：
-
-```text
-https://notion-proxy.nmnm7782525250.workers.dev
-```
-
-则配置成：
+示例：
 
 ```js
 window.BLOG_CONFIG = {
@@ -319,9 +292,78 @@ window.BLOG_CONFIG = {
 };
 ```
 
-## Wrangler 入口
+若前端与 Worker 部署在同一域名下，也可将 `apiBase` 配置为空字符串。
 
-当前 [wrangler.jsonc](/Users/lipeizhang/Downloads/code/vibe/Blog/wrangler.jsonc) 已经改成：
+## 测试脚本
+
+仓库中提供了 Worker 测试脚本：
+
+- [scripts/test-worker.mjs](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/test-worker.mjs)
+
+运行方式：
+
+```bash
+node scripts/test-worker.mjs https://your-worker.workers.dev
+```
+
+该脚本将依次执行以下操作：
+
+1. 请求 `/posts`
+2. 输出文章列表概要
+3. 取第一篇文章的 `id`
+4. 请求 `/posts/:id`
+5. 输出正文 block 摘要
+
+## 详情页请求优化
+
+当前版本已对文章详情页的加载链路进行优化。
+
+当前线上 Worker 已支持：
+
+```text
+GET /posts/:id?full=true
+```
+
+该接口会一次性返回：
+
+- `meta`
+  包含文章标题、创建时间、分类和标签等元数据
+
+- `blocks`
+  包含正文 block 列表
+
+因此，当前详情页加载流程如下：
+
+1. 页面 URL 仅保留 `id`
+2. 详情页请求一次 `GET /posts/:id?full=true`
+3. 前端从返回结果中读取 `meta` 和 `blocks`
+4. 前端渲染标题、分类、标签、日期与正文内容
+
+该实现避免了详情页再次请求 `/posts`，同时也避免在 URL 中附带过多文章摘要信息。
+
+## 部署说明
+
+### 静态前端
+
+当前前端文件结构可以直接部署到以下任意静态托管平台：
+
+- GitHub Pages
+- Cloudflare Pages
+- Nginx
+- 任意标准静态文件服务器
+
+部署时需确保以下文件可被公开访问：
+
+- `index.html`
+- `post.html`
+- `styles.css`
+- `app.js`
+- `site.config.js`
+- `assets/`
+
+### Cloudflare Worker
+
+当前 Wrangler 入口配置位于 [wrangler.jsonc](/Users/lipeizhang/Downloads/code/vibe/Blog/wrangler.jsonc)：
 
 ```json
 {
@@ -331,4 +373,4 @@ window.BLOG_CONFIG = {
 }
 ```
 
-也就是 Wrangler 实际部署的入口就是你现在这份 `scripts/index.js`。
+这意味着当前对外接口行为，以 [scripts/index.js](/Users/lipeizhang/Downloads/code/vibe/Blog/scripts/index.js) 为准。

@@ -40,24 +40,29 @@ function summarizePosts(posts) {
   console.log(`共返回 ${posts.length} 篇文章`);
 
   posts.slice(0, 5).forEach((post, index) => {
-    console.log(`\n[${index + 1}] ${post.title || "无标题"}`);
+    console.log(`\n[${index + 1}] ${post.name || "无标题"}`);
     console.log(`id: ${post.id || "(none)"}`);
-    console.log(`category: ${post.category || "(none)"}`);
-    console.log(`date: ${post.date || "(none)"}`);
-    console.log(`tags: ${Array.isArray(post.tags) ? post.tags.join(", ") : "(none)"}`);
-    console.log(`excerpt: ${post.excerpt || "(none)"}`);
+    console.log(`created_time: ${post.created_time || "(none)"}`);
   });
 
   return posts[0]?.id || null;
 }
 
-function summarizeBlocks(blocks) {
-  if (!Array.isArray(blocks)) {
-    console.log("返回内容不是数组：");
-    console.log(blocks);
+function summarizeDetail(detail) {
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+    console.log("返回内容不是对象：");
+    console.log(detail);
     return;
   }
 
+  const meta = detail.meta || {};
+  const blocks = Array.isArray(detail.blocks) ? detail.blocks : [];
+
+  console.log(`标题: ${meta.name || "无标题"}`);
+  console.log(`id: ${meta.id || "(none)"}`);
+  console.log(`created_time: ${meta.created_time || "(none)"}`);
+  console.log(`category: ${meta.category || "(none)"}`);
+  console.log(`tags: ${Array.isArray(meta.tags) ? meta.tags.join(", ") : "(none)"}`);
   console.log(`共返回 ${blocks.length} 个 block`);
 
   blocks.slice(0, 10).forEach((block, index) => {
@@ -86,8 +91,8 @@ async function main() {
     return;
   }
 
-  printSection(`测试 /posts/${firstPostId}`);
-  const detailResult = await fetchJson(`/posts/${firstPostId}`);
+  printSection(`测试 /posts/${firstPostId}?full=true`);
+  const detailResult = await fetchJson(`/posts/${firstPostId}?full=true`);
   console.log(`URL: ${detailResult.url}`);
   console.log(`Status: ${detailResult.status} ${detailResult.statusText}`);
   console.log(`Content-Type: ${detailResult.contentType}`);
@@ -98,7 +103,7 @@ async function main() {
     return;
   }
 
-  summarizeBlocks(detailResult.data);
+  summarizeDetail(detailResult.data);
 }
 
 main().catch((error) => {

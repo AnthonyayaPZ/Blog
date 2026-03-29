@@ -44,7 +44,6 @@ const state = {
   posts: [],
   currentCat: "all",
   currentQuery: "",
-  currentArticleId: null,
   postDetails: new Map()
 };
 
@@ -52,8 +51,15 @@ function buildApiUrl(path) {
   return `${config.apiBase}${path}`;
 }
 
+function pageType() {
+  return document.body.dataset.page || "home";
+}
+
 function setStatus(message, isError = false) {
   const status = document.querySelector("[data-status]");
+  if (!status) {
+    return;
+  }
   status.textContent = message;
   status.classList.toggle("error", isError);
 }
@@ -101,6 +107,10 @@ function categoryLabel(cat) {
     essay: "随笔杂谈"
   };
   return map[cat] || "随笔杂谈";
+}
+
+function postUrl(post) {
+  return `./post.html?id=${encodeURIComponent(post.id)}`;
 }
 
 function normalizePost(post, index) {
@@ -211,7 +221,7 @@ async function loadPostDetail(id) {
     return state.postDetails.get(id);
   }
 
-  const response = await fetch(buildApiUrl(`/posts/${encodeURIComponent(id)}`), {
+  const response = await fetch(buildApiUrl(`/posts/${encodeURIComponent(id)}?full=true`), {
     headers: { Accept: "application/json" }
   });
 
@@ -219,18 +229,16 @@ async function loadPostDetail(id) {
     throw new Error(`文章详情接口请求失败：${response.status}`);
   }
 
-  const blocks = await response.json();
-  if (!Array.isArray(blocks)) {
-    throw new Error("文章详情接口返回格式错误，应返回 block 数组。");
-  }
+  const payload = await response.json();
+  const meta = payload?.meta;
+  const blocks = payload?.blocks;
 
-  const summary = state.posts.find((entry) => String(entry.id) === String(id));
-  if (!summary) {
-    throw new Error("未找到文章摘要信息。");
+  if (!meta || !Array.isArray(blocks)) {
+    throw new Error("文章详情接口返回格式错误，应返回包含 meta 和 blocks 的对象。");
   }
 
   const detail = {
-    ...summary,
+    ...normalizePost(meta, 0),
     blocks,
     ...mapNotionBlocks(blocks)
   };
@@ -268,7 +276,7 @@ function renderPosts() {
   list.innerHTML = posts
     .map(
       (post, index) => `
-        <div class="post-item" data-post-id="${escapeHtml(post.id)}" style="animation-delay:${index * 0.07}s">
+        <a class="post-item" href="${postUrl(post)}" style="animation-delay:${index * 0.07}s">
           <div class="post-info">
             <div class="post-category-tag">${escapeHtml(post.catLabel)}</div>
             <div class="post-title">${escapeHtml(post.title)}</div>
@@ -281,28 +289,16 @@ function renderPosts() {
           <div class="post-cover-wrap">
             ${renderCover(post.cover, post.title)}
           </div>
-        </div>
+        </a>
       `
     )
     .join("");
-
-  list.querySelectorAll("[data-post-id]").forEach((item) => {
-    item.addEventListener("click", () => {
-      showArticle(item.dataset.postId);
-    });
-  });
 }
 
 function renderTabs() {
   document.querySelectorAll("[data-tab-btn]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tabBtn === state.currentCat);
   });
-}
-
-function showPage(name) {
-  document.querySelectorAll(".page").forEach((page) => page.classList.remove("active"));
-  document.getElementById(`page-${name}`).classList.add("active");
-  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function scrollToSection(id) {
@@ -318,11 +314,13 @@ function renderArticle(post) {
     ? post.content
     : [{ type: "p", text: "这篇文章当前没有可显示的正文内容。" }];
 
+  document.title = `${post.title} | 霙樱怪的个人博客`;
+
   document.getElementById("article-hero-content").innerHTML = `
-    <button class="back-btn" data-back-home>
+    <a class="back-btn" href="./index.html">
       <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5l-5 5 5 5"/></svg>
       返回首页
-    </button>
+    </a>
     <div class="article-hero-tags">${post.tags
       .map((tag) => `<span class="article-hero-tag">${escapeHtml(tag)}</span>`)
       .join("")}</div>
@@ -333,8 +331,6 @@ function renderArticle(post) {
       创建于 ${escapeHtml(post.date)}
     </div>
   `;
-
-  document.querySelector("[data-back-home]").addEventListener("click", () => showPage("home"));
 
   document.getElementById("article-content").innerHTML =
     '<div class="article-ai-note">（正文由 Notion 页面 block 内容生成）</div>' +
@@ -383,70 +379,40 @@ function renderArticle(post) {
       item.classList.add("active");
     });
   });
-
-  showPage("article");
 }
 
-async function showArticle(id) {
-  const summary = state.posts.find((entry) => String(entry.id) === String(id));
-  if (!summary) {
-    return;
-  }
-
-  setStatus("正在加载文章详情…");
-
-  try {
-    const post = await loadPostDetail(id);
-    renderArticle(post);
-    setStatus(`已加载 ${state.posts.length} 篇文章。`);
-  } catch (error) {
-    console.error(error);
-    const fallback = fallbackPosts[0];
-    renderArticle({
-      ...normalizePost(fallback, 0),
-      ...mapNotionBlocks(fallback.blocks)
-    });
-    setStatus("详情接口加载失败，已回退到本地示例文章。", true);
-  }
-}
-
-function updateCategory(cat) {
-  state.currentCat = cat;
-  renderTabs();
-  renderPosts();
-}
-
-function bindEvents() {
-  document.querySelector("[data-nav-home]").addEventListener("click", (event) => {
+async function initHomePage() {
+  document.querySelector("[data-nav-home]")?.addEventListener("click", (event) => {
     event.preventDefault();
-    showPage("home");
-    updateCategory("all");
+    window.location.href = "./index.html";
   });
 
   document.querySelectorAll("[data-nav-link]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
-      showPage("home");
-      updateCategory(link.dataset.navLink);
+      state.currentCat = link.dataset.navLink;
+      renderTabs();
+      renderPosts();
     });
   });
 
   document.querySelectorAll("[data-tab-btn]").forEach((button) => {
-    button.addEventListener("click", () => updateCategory(button.dataset.tabBtn));
+    button.addEventListener("click", () => {
+      state.currentCat = button.dataset.tabBtn;
+      renderTabs();
+      renderPosts();
+    });
   });
 
-  document.querySelector("[data-search-form]").addEventListener("submit", (event) => {
+  document.querySelector("[data-search-form]")?.addEventListener("submit", (event) => {
     event.preventDefault();
   });
 
-  document.querySelector("[data-search-input]").addEventListener("input", (event) => {
+  document.querySelector("[data-search-input]")?.addEventListener("input", (event) => {
     state.currentQuery = event.target.value.trim();
     renderPosts();
   });
-}
 
-async function init() {
-  bindEvents();
   setStatus("正在加载文章…");
 
   try {
@@ -463,4 +429,34 @@ async function init() {
   }
 }
 
-init();
+async function initPostPage() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("id");
+
+  if (!id) {
+    renderArticle({
+      ...normalizePost(fallbackPosts[0], 0),
+      ...mapNotionBlocks(fallbackPosts[0].blocks)
+    });
+    return;
+  }
+
+  try {
+    const post = await loadPostDetail(id);
+    renderArticle(post);
+  } catch (error) {
+    console.error(error);
+    renderArticle({
+      ...normalizePost(fallbackPosts[0], 0),
+      ...mapNotionBlocks(fallbackPosts[0].blocks)
+    });
+  }
+}
+
+if (pageType() === "home") {
+  initHomePage();
+}
+
+if (pageType() === "post") {
+  initPostPage();
+}
