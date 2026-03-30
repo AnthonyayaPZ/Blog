@@ -1,5 +1,5 @@
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const cors = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -11,6 +11,36 @@ export default {
     }
 
     const url = new URL(request.url);
+
+    // ── Cloudflare Edge Cache helpers ──────────────────────────────────────
+    // 用规范化的 URL 作为缓存 key（去除 Authorization 等请求头影响）
+    const edgeCache = caches.default;
+
+    async function edgeCacheGet(cacheUrl) {
+      return edgeCache.match(new Request(cacheUrl));
+    }
+
+    function edgeCachePut(cacheUrl, body, ttl) {
+      const res = new Response(body, {
+        headers: {
+          ...cors,
+          'Cache-Control': `public, max-age=${ttl}, s-maxage=${ttl}`,
+        },
+      });
+      // waitUntil 确保响应返回后写缓存操作仍能完成
+      ctx.waitUntil(edgeCache.put(new Request(cacheUrl), res.clone()));
+      return res;
+    }
+
+    // TTL 常量（秒）
+    const TTL = {
+      posts:    300,   // 文章列表  5 分钟
+      postFull: 600,   // 文章详情 10 分钟
+      tags:     300,
+      graph:    600,
+      db:       3600,
+    };
+    // ──────────────────────────────────────────────────────────────────────
 
     // 统一的 Notion 请求头
     const notionHeaders = {
@@ -99,22 +129,28 @@ export default {
 
     // GET /db → 数据库名
     if (url.pathname === '/db') {
+      const cacheUrl = `${url.origin}/db`;
+      const hit = await edgeCacheGet(cacheUrl);
+      if (hit) return hit;
+
       const res = await fetch(
         `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}`,
         { headers: notionHeaders }
       );
       const data = await res.json();
       if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
-      return new Response(
-        JSON.stringify({ name: data.title?.[0]?.plain_text ?? '未命名' }),
-        { headers: cors }
-      );
+      return edgeCachePut(cacheUrl, JSON.stringify({ name: data.title?.[0]?.plain_text ?? '未命名' }), TTL.db);
     }
 
     // GET /posts?tag=关键字&category=分类 → 文章列表，支持过滤
     if (url.pathname === '/posts') {
       const filterTag = url.searchParams.get('tag') ?? '';
       const filterCategory = url.searchParams.get('category') ?? '';
+
+      // 带过滤参数的请求各自独立缓存
+      const cacheUrl = `${url.origin}/posts?tag=${encodeURIComponent(filterTag)}&category=${encodeURIComponent(filterCategory)}`;
+      const hit = await edgeCacheGet(cacheUrl);
+      if (hit) return hit;
 
       const res = await fetch(
         `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}/query`,
@@ -147,11 +183,15 @@ export default {
         posts = posts.filter(p => p.category === filterCategory);
       }
 
-      return new Response(JSON.stringify(posts), { headers: cors });
+      return edgeCachePut(cacheUrl, JSON.stringify(posts), TTL.posts);
     }
 
     // GET /tags → 全部标签及出现频次
     if (url.pathname === '/tags') {
+      const cacheUrl = `${url.origin}/tags`;
+      const hit = await edgeCacheGet(cacheUrl);
+      if (hit) return hit;
+
       const res = await fetch(
         `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}/query`,
         {
@@ -175,11 +215,15 @@ export default {
         .sort((a, b) => b[1] - a[1])
         .map(([tag, count]) => ({ tag, count }));
 
-      return new Response(JSON.stringify(sorted), { headers: cors });
+      return edgeCachePut(cacheUrl, JSON.stringify(sorted), TTL.tags);
     }
 
     // GET /graph → 知识图谱节点和边（标签共现关系）
     if (url.pathname === '/graph') {
+      const cacheUrl = `${url.origin}/graph`;
+      const hit = await edgeCacheGet(cacheUrl);
+      if (hit) return hit;
+
       const res = await fetch(
         `https://api.notion.com/v1/databases/${env.NOTION_DATABASE_ID}/query`,
         {
@@ -213,7 +257,7 @@ export default {
         return { source, target, weight };
       });
 
-      return new Response(JSON.stringify({ nodes, edges }), { headers: cors });
+      return edgeCachePut(cacheUrl, JSON.stringify({ nodes, edges }), TTL.graph);
     }
 
     // GET /posts/:id           → 仅 Markdown 正文
@@ -224,16 +268,24 @@ export default {
       const full = url.searchParams.get('full') === 'true';
 
       if (!full) {
+        const cacheUrl = `${url.origin}/posts/${pageId}`;
+        const hit = await edgeCacheGet(cacheUrl);
+        if (hit) return hit;
+
         const res = await fetch(
           `https://api.notion.com/v1/blocks/${pageId}/children`,
           { headers: notionHeaders }
         );
         const data = await res.json();
         if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
-        return new Response(JSON.stringify({ markdown: blocksToMarkdown(data.results) }), { headers: cors });
+        return edgeCachePut(cacheUrl, JSON.stringify({ markdown: blocksToMarkdown(data.results) }), TTL.postFull);
       }
 
       // full=true：并发请求元数据 + 正文块
+      const cacheUrl = `${url.origin}/posts/${pageId}?full=true`;
+      const hit = await edgeCacheGet(cacheUrl);
+      if (hit) return hit;
+
       const [pageRes, blocksRes] = await Promise.all([
         fetch(`https://api.notion.com/v1/pages/${pageId}`, { headers: notionHeaders }),
         fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, { headers: notionHeaders }),
@@ -247,7 +299,7 @@ export default {
       if (!pageRes.ok) return new Response(JSON.stringify({ error: pageData }), { status: 502, headers: cors });
       if (!blocksRes.ok) return new Response(JSON.stringify({ error: blocksData }), { status: 502, headers: cors });
 
-      return new Response(JSON.stringify({
+      return edgeCachePut(cacheUrl, JSON.stringify({
         meta: {
           id: pageId,
           name: pageData.properties.Name?.title?.[0]?.plain_text ?? '无标题',
@@ -256,7 +308,7 @@ export default {
           tags: parseTags(pageData.properties.Tags?.rich_text?.[0]?.plain_text),
         },
         markdown: blocksToMarkdown(blocksData.results),
-      }), { headers: cors });
+      }), TTL.postFull);
     }
 
     return new Response(JSON.stringify({ error: 'Not found' }), {

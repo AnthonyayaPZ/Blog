@@ -110,7 +110,34 @@ function normalizePost(post, index) {
   };
 }
 
+// ── localStorage cache with TTL ──────────────────────────────────────────
+const LS_TTL = {
+  posts:    5  * 60 * 1000,   // 文章列表  5 分钟
+  postFull: 10 * 60 * 1000,   // 文章详情 10 分钟
+};
+
+function lsGet(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { data, exp } = JSON.parse(raw);
+    if (Date.now() > exp) { localStorage.removeItem(key); return null; }
+    return data;
+  } catch { return null; }
+}
+
+function lsSet(key, data, ttl) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, exp: Date.now() + ttl }));
+  } catch { /* 存储满时静默忽略 */ }
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 async function loadPosts() {
+  const cacheKey = "blog:posts";
+  const cached = lsGet(cacheKey);
+  if (cached) return cached;
+
   const response = await fetch(buildApiUrl("/posts"), {
     headers: { Accept: "application/json" }
   });
@@ -124,12 +151,23 @@ async function loadPosts() {
     throw new Error("文章接口返回格式错误，应返回数组。");
   }
 
-  return payload.map(normalizePost);
+  const posts = payload.map(normalizePost);
+  lsSet(cacheKey, posts, LS_TTL.posts);
+  return posts;
 }
 
 async function loadPostDetail(id) {
+  // 1. 内存缓存（同一页面会话中最快）
   if (state.postDetails.has(id)) {
     return state.postDetails.get(id);
+  }
+
+  // 2. localStorage 缓存（刷新页面后仍有效）
+  const cacheKey = `blog:post:${id}`;
+  const cached = lsGet(cacheKey);
+  if (cached) {
+    state.postDetails.set(id, cached);
+    return cached;
   }
 
   const response = await fetch(buildApiUrl(`/posts/${encodeURIComponent(id)}?full=true`), {
@@ -153,6 +191,8 @@ async function loadPostDetail(id) {
     markdown
   };
 
+  // 3. 写入两级缓存
+  lsSet(cacheKey, detail, LS_TTL.postFull);
   state.postDetails.set(id, detail);
   return detail;
 }
