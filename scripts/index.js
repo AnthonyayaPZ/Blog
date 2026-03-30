@@ -119,6 +119,13 @@ export default {
       return parts.join('');
     }
 
+    // 从 Notion page 对象提取封面图 URL（支持 external 和 file 两种类型）
+    function parseCoverUrl(page) {
+      const cover = page.cover;
+      if (!cover) return '';
+      return cover.external?.url || cover.file?.url || '';
+    }
+
     // GET / → 健康检查
     if (url.pathname === '/') {
       return new Response(
@@ -172,6 +179,7 @@ export default {
         created_time: page.created_time,
         category: page.properties.Category?.select?.name ?? '',
         tags: parseTags(page.properties.Tags?.rich_text?.[0]?.plain_text),
+        cover_url: parseCoverUrl(page),
       }));
 
       if (filterTag) {
@@ -306,6 +314,7 @@ export default {
           created_time: pageData.created_time,
           category: pageData.properties.Category?.select?.name ?? '',
           tags: parseTags(pageData.properties.Tags?.rich_text?.[0]?.plain_text),
+          cover_url: parseCoverUrl(pageData),
         },
         markdown: blocksToMarkdown(blocksData.results),
       }), TTL.postFull);

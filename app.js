@@ -105,7 +105,7 @@ function normalizePost(post, index) {
     created_time: createdTime,
     date: formatDisplayDate(createdTime),
     excerpt: post.excerpt || "这篇文章来自 Notion 数据库，点击后可查看正文内容。",
-    cover: post.cover || `cover-${(index % 6) + 1}`,
+    cover: post.cover_url || post.cover || `cover-${(index % 6) + 1}`,
     markdown: post.markdown || ""
   };
 }
@@ -232,7 +232,7 @@ function renderPosts() {
             <div class="post-title">${escapeHtml(post.title)}</div>
             <div class="post-excerpt">${escapeHtml(post.excerpt)}</div>
             <div class="post-tags">${post.tags
-              .map((tag) => `<span class="post-tag">${escapeHtml(tag)}</span>`)
+              .map((tag) => `<span class="post-tag" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`)
               .join("")}</div>
             <div class="post-meta">创建于 ${escapeHtml(post.date)}</div>
           </div>
@@ -261,13 +261,30 @@ function scrollToSection(id) {
 function renderArticle(post) {
   document.title = `${post.title} | 霙樱怪的个人博客`;
 
+  // 若有 Notion 封面，将其设为 hero 背景图
+  const heroArt = document.querySelector(".article-hero-art");
+  if (heroArt) {
+    if (typeof post.cover === "string" && /^https?:\/\//.test(post.cover)) {
+      // 封面图 + 渐变双层：图片加载失败时渐变作为兜底
+      heroArt.style.backgroundImage = `url("${post.cover.replace(/"/g, '%22')}"), linear-gradient(180deg, #9ac3db 0%, #6fa8c0 35%, #5a9980 60%, #4a7d65 85%, #3d6b54 100%)`;
+      heroArt.style.backgroundSize = "cover, cover";
+      heroArt.style.backgroundPosition = "center, center";
+      heroArt.classList.add("has-photo");
+    } else {
+      heroArt.style.backgroundImage = "";
+      heroArt.style.backgroundSize = "";
+      heroArt.style.backgroundPosition = "";
+      heroArt.classList.remove("has-photo");
+    }
+  }
+
   document.getElementById("article-hero-content").innerHTML = `
     <a class="back-btn" href="./index.html">
       <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5l-5 5 5 5"/></svg>
       返回首页
     </a>
     <div class="article-hero-tags">${post.tags
-      .map((tag) => `<span class="article-hero-tag">${escapeHtml(tag)}</span>`)
+      .map((tag) => `<a class="article-hero-tag" href="./tags.html?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`)
       .join("")}</div>
     <div class="article-hero-title">${escapeHtml(post.title)}</div>
     <div class="article-hero-subtitle">${escapeHtml(post.excerpt)}</div>
@@ -355,6 +372,16 @@ async function initHomePage() {
     renderPosts();
   });
 
+  // 标签点击事件代理（不能用嵌套的 <a>，用 span[data-tag] + 事件代理实现）
+  document.getElementById("post-list").addEventListener("click", (event) => {
+    const tagEl = event.target.closest("[data-tag]");
+    if (tagEl) {
+      event.preventDefault();
+      event.stopPropagation();
+      window.location.href = `./tags.html?tag=${encodeURIComponent(tagEl.dataset.tag)}`;
+    }
+  });
+
   setStatus("正在加载文章…");
 
   try {
@@ -368,6 +395,88 @@ async function initHomePage() {
     renderTabs();
     renderPosts();
     setStatus("Notion 接口加载失败，已回退到本地示例文章。", true);
+  }
+}
+
+async function initTagsPage() {
+  setStatus("正在加载标签…");
+
+  let posts;
+  try {
+    posts = await loadPosts();
+  } catch (error) {
+    console.error(error);
+    posts = fallbackPosts.map(normalizePost);
+    setStatus("Notion 接口加载失败，已回退到本地示例文章。", true);
+  }
+
+  // 构建 tag → [post] 映射
+  const tagMap = new Map();
+  for (const post of posts) {
+    for (const tag of post.tags) {
+      if (!tagMap.has(tag)) tagMap.set(tag, []);
+      tagMap.get(tag).push(post);
+    }
+  }
+
+  // 按标签下文章数降序排列
+  const sortedTags = [...tagMap.keys()].sort(
+    (a, b) => tagMap.get(b).length - tagMap.get(a).length
+  );
+
+  const params = new URLSearchParams(window.location.search);
+  const focusTag = params.get("tag") || "";
+
+  // 渲染标签云
+  const cloudEl = document.getElementById("tag-cloud");
+  if (cloudEl) {
+    cloudEl.innerHTML = sortedTags
+      .map((tag) => {
+        const count = tagMap.get(tag).length;
+        const isActive = tag === focusTag;
+        return `<a class="tag-cloud-item${isActive ? " active" : ""}" href="#tag-${encodeURIComponent(tag)}">${escapeHtml(tag)}<span class="tag-cloud-count">${count}</span></a>`;
+      })
+      .join("");
+  }
+
+  // 渲染标签分区列表
+  const sectionsEl = document.getElementById("tag-sections");
+  if (sectionsEl) {
+    sectionsEl.innerHTML = sortedTags
+      .map((tag) => {
+        const sectionPosts = tagMap.get(tag);
+        const anchorId = `tag-${encodeURIComponent(tag)}`;
+        return `
+          <section class="tag-section" id="${anchorId}">
+            <div class="tag-section-header">
+              <span class="tag-section-icon">§</span>
+              <span class="tag-section-name">${escapeHtml(tag)}</span>
+              <span class="tag-section-count">${sectionPosts.length} 篇</span>
+            </div>
+            <ul class="tag-section-list">
+              ${sectionPosts
+                .map(
+                  (post) => `
+                <li class="tag-section-item">
+                  <a href="${postUrl(post)}" class="tag-section-link">${escapeHtml(post.title)}</a>
+                  <span class="tag-section-date">${escapeHtml(post.date)}</span>
+                </li>`
+                )
+                .join("")}
+            </ul>
+          </section>`;
+      })
+      .join("");
+  }
+
+  setStatus(`共 ${sortedTags.length} 个标签，${posts.length} 篇文章。`);
+
+  // 如果 URL 含 ?tag=xxx，滚动到对应分区
+  if (focusTag) {
+    const targetEl = document.getElementById(`tag-${encodeURIComponent(focusTag)}`);
+    if (targetEl) {
+      setTimeout(() => targetEl.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    }
   }
 }
 
@@ -395,4 +504,8 @@ if (pageType() === "home") {
 
 if (pageType() === "post") {
   initPostPage();
+}
+
+if (pageType() === "tags") {
+  initTagsPage();
 }

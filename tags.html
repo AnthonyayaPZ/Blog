@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>文章详情 | 霙樱怪的个人博客</title>
+    <title>标签 | 霙樱怪的个人博客</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,37 +12,35 @@
     />
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body data-page="post">
+  <body data-page="tags">
     <nav>
       <a class="nav-logo" href="./index.html">霙樱怪的个人博客</a>
       <div class="nav-links">
         <a href="./index.html">主页</a>
-        <a href="./tags.html">标签</a>
+        <a href="./tags.html" class="nav-active">标签</a>
       </div>
       <div class="nav-search nav-search-static">
-        <span>文章详情</span>
+        <span>标签索引</span>
       </div>
     </nav>
 
-    <div class="article-page-shell">
-      <div class="article-hero">
-        <div class="article-hero-art"></div>
-        <div class="article-hero-overlay"></div>
-        <div class="article-hero-content" id="article-hero-content"></div>
-      </div>
-
-      <div class="article-body">
-        <aside class="article-sidebar">
-          <div class="catalog-title">— CATALOG</div>
-          <ul class="catalog-list" id="catalog-list"></ul>
-        </aside>
-        <article class="article-content" id="article-content"></article>
+    <div class="hero tags-hero">
+      <div class="hero-art"></div>
+      <div class="hero-overlay"></div>
+      <div class="hero-content">
+        <div class="hero-title">标签</div>
+        <div class="hero-subtitle">按主题探索文章</div>
       </div>
     </div>
 
+    <main class="main">
+      <div class="tag-cloud" id="tag-cloud"></div>
+      <div class="status-bar" data-status></div>
+      <div id="tag-sections"></div>
+    </main>
+
     <footer class="footer">© 2026 霙樱怪的个人博客 · 保留所有权利</footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
     <script src="./site.config.js"></script>
     <script src="./app.js"></script>
   </body>
