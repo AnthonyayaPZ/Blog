@@ -68,6 +68,7 @@ function normalizeCategory(value) {
     "AI 日报": "ai",
     ai: "ai",
     "学术论文": "paper",
+    "科研论文": "paper",
     paper: "paper",
     "随笔杂谈": "essay",
     essay: "essay"
@@ -78,7 +79,7 @@ function normalizeCategory(value) {
 function categoryLabel(cat) {
   const map = {
     ai: "AI日报",
-    paper: "学术论文",
+    paper: "科研论文",
     essay: "随笔杂谈"
   };
   return map[cat] || "随笔杂谈";

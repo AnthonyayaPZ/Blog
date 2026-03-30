@@ -262,7 +262,7 @@ function normalizeCategory(value) {
     return "ai";
   }
 
-  if (value === "学术论文" || value === "paper") {
+  if (value === "学术论文" || value === "科研论文" || value === "paper") {
     return "paper";
   }
 
