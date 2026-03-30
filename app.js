@@ -7,32 +7,7 @@ const fallbackPosts = [
     created_time: "2026-03-15T00:00:00.000Z",
     excerpt: "本地示例文章，用于 Worker 不可用时的兜底显示。",
     cover: "cover-1",
-    blocks: [
-      { type: "heading_2", heading_2: { rich_text: [{ plain_text: "一、发布背景" }] } },
-      {
-        type: "paragraph",
-        paragraph: {
-          rich_text: [
-            {
-              plain_text:
-                "2026年3月，OpenAI 在开发者大会上正式发布了 GPT-5。与前代相比，它不仅在能力上继续扩展，更重要的是交互速度和复杂任务推理的稳定性得到了明显改善。"
-            }
-          ]
-        }
-      },
-      { type: "heading_2", heading_2: { rich_text: [{ plain_text: "二、行业影响" }] } },
-      {
-        type: "paragraph",
-        paragraph: {
-          rich_text: [
-            {
-              plain_text:
-                "模型能力提升之后，真正有竞争力的产品不再只是接入模型，而是能把模型嵌入稳定且清楚的流程。"
-            }
-          ]
-        }
-      }
-    ]
+    markdown: `## 一、发布背景\n\n2026年3月，OpenAI 在开发者大会上正式发布了 GPT-5。与前代相比，它不仅在能力上继续扩展，更重要的是交互速度和复杂任务推理的稳定性得到了明显改善。\n\n## 二、行业影响\n\n模型能力提升之后，真正有竞争力的产品不再只是接入模型，而是能把模型嵌入稳定且清楚的流程。`
   }
 ];
 
@@ -130,7 +105,7 @@ function normalizePost(post, index) {
     date: formatDisplayDate(createdTime),
     excerpt: post.excerpt || "这篇文章来自 Notion 数据库，点击后可查看正文内容。",
     cover: post.cover || `cover-${(index % 6) + 1}`,
-    blocks: Array.isArray(post.blocks) ? post.blocks : []
+    markdown: post.markdown || ""
   };
 }
 
@@ -151,71 +126,6 @@ async function loadPosts() {
   return payload.map(normalizePost);
 }
 
-function mapRichText(items = []) {
-  return items.map((item) => item.plain_text || "").join("").trim();
-}
-
-function mapNotionBlocks(blocks) {
-  const content = [];
-  const sections = [];
-
-  blocks.forEach((block) => {
-    if (block.type === "heading_1" || block.type === "heading_2" || block.type === "heading_3") {
-      const text = mapRichText(block[block.type]?.rich_text || []);
-      if (text) {
-        content.push({ type: "section", text });
-        sections.push({ title: text, sub: [] });
-      }
-      return;
-    }
-
-    if (block.type === "paragraph") {
-      const text = mapRichText(block.paragraph?.rich_text || []);
-      if (text) {
-        content.push({ type: "p", text });
-      }
-      return;
-    }
-
-    if (block.type === "quote") {
-      const text = mapRichText(block.quote?.rich_text || []);
-      if (text) {
-        content.push({ type: "quote", text });
-      }
-      return;
-    }
-
-    if (block.type === "bulleted_list_item") {
-      const text = mapRichText(block.bulleted_list_item?.rich_text || []);
-      if (text) {
-        content.push({ type: "p", text: `• ${text}` });
-      }
-      return;
-    }
-
-    if (block.type === "numbered_list_item") {
-      const text = mapRichText(block.numbered_list_item?.rich_text || []);
-      if (text) {
-        content.push({ type: "p", text: `1. ${text}` });
-      }
-      return;
-    }
-
-    if (block.type === "callout") {
-      const text = mapRichText(block.callout?.rich_text || []);
-      if (text) {
-        content.push({ type: "quote", text });
-      }
-    }
-  });
-
-  if (!sections.length && content.length) {
-    sections.push({ title: "正文", sub: [] });
-  }
-
-  return { content, sections };
-}
-
 async function loadPostDetail(id) {
   if (state.postDetails.has(id)) {
     return state.postDetails.get(id);
@@ -231,16 +141,15 @@ async function loadPostDetail(id) {
 
   const payload = await response.json();
   const meta = payload?.meta;
-  const blocks = payload?.blocks;
+  const markdown = payload?.markdown;
 
-  if (!meta || !Array.isArray(blocks)) {
-    throw new Error("文章详情接口返回格式错误，应返回包含 meta 和 blocks 的对象。");
+  if (!meta || typeof markdown !== "string") {
+    throw new Error("文章详情接口返回格式错误，应返回包含 meta 和 markdown 的对象。");
   }
 
   const detail = {
     ...normalizePost(meta, 0),
-    blocks,
-    ...mapNotionBlocks(blocks)
+    markdown
   };
 
   state.postDetails.set(id, detail);
@@ -309,11 +218,6 @@ function scrollToSection(id) {
 }
 
 function renderArticle(post) {
-  const articleSections = post.sections.length ? post.sections : [{ title: "正文", sub: [] }];
-  const articleContent = post.content.length
-    ? post.content
-    : [{ type: "p", text: "这篇文章当前没有可显示的正文内容。" }];
-
   document.title = `${post.title} | 霙樱怪的个人博客`;
 
   document.getElementById("article-hero-content").innerHTML = `
@@ -332,37 +236,34 @@ function renderArticle(post) {
     </div>
   `;
 
-  document.getElementById("article-content").innerHTML =
-    '<div class="article-ai-note">（正文由 Notion 页面 block 内容生成）</div>' +
-    articleContent
-      .map((block, index) => {
-        if (block.type === "section") {
-          const parts = block.text.split("、");
-          const anchor = `section-${index}`;
-          return `<h2 class="article-section-title" id="${anchor}"><span class="num">${escapeHtml(
-            parts.length > 1 ? `${parts[0]}、` : `${index + 1}.`
-          )}</span>${escapeHtml(parts.length > 1 ? parts.slice(1).join("、") : block.text)}</h2>`;
-        }
+  // Render Markdown → HTML
+  const contentEl = document.getElementById("article-content");
+  const markdown = post.markdown || "这篇文章当前没有可显示的正文内容。";
+  contentEl.innerHTML = marked.parse(markdown);
 
-        if (block.type === "quote") {
-          return `<blockquote class="article-blockquote">${escapeHtml(block.text)}</blockquote>`;
-        }
-
-        return `<p class="article-p">${escapeHtml(block.text)}</p>`;
-      })
-      .join("");
-
-  const sectionAnchors = [];
-  document.querySelectorAll(".article-section-title").forEach((heading) => {
-    sectionAnchors.push({ id: heading.id });
+  // Assign IDs to headings and collect catalog entries
+  const sections = [];
+  let currentSection = null;
+  contentEl.querySelectorAll("h2, h3").forEach((heading, index) => {
+    const id = `section-${index}`;
+    heading.id = id;
+    if (heading.tagName === "H2") {
+      currentSection = { title: heading.textContent, sub: [], id };
+      sections.push(currentSection);
+    } else if (heading.tagName === "H3" && currentSection) {
+      currentSection.sub.push({ title: heading.textContent, id });
+    }
   });
 
-  document.getElementById("catalog-list").innerHTML = articleSections
-    .map((section, index) => {
-      const anchor = sectionAnchors[index]?.id || "";
-      const parent = `<li class="catalog-item" data-anchor="${anchor}">${escapeHtml(section.title)}</li>`;
-      const children = (section.sub || [])
-        .map((sub) => `<li class="catalog-item sub">${escapeHtml(sub)}</li>`)
+  if (!sections.length) {
+    sections.push({ title: "正文", sub: [], id: "" });
+  }
+
+  document.getElementById("catalog-list").innerHTML = sections
+    .map((section) => {
+      const parent = `<li class="catalog-item" data-anchor="${section.id}">${escapeHtml(section.title)}</li>`;
+      const children = section.sub
+        .map((sub) => `<li class="catalog-item sub" data-anchor="${sub.id}">${escapeHtml(sub.title)}</li>`)
         .join("");
       return parent + children;
     })
@@ -434,10 +335,7 @@ async function initPostPage() {
   const id = params.get("id");
 
   if (!id) {
-    renderArticle({
-      ...normalizePost(fallbackPosts[0], 0),
-      ...mapNotionBlocks(fallbackPosts[0].blocks)
-    });
+    renderArticle(normalizePost(fallbackPosts[0], 0));
     return;
   }
 
@@ -446,10 +344,7 @@ async function initPostPage() {
     renderArticle(post);
   } catch (error) {
     console.error(error);
-    renderArticle({
-      ...normalizePost(fallbackPosts[0], 0),
-      ...mapNotionBlocks(fallbackPosts[0].blocks)
-    });
+    renderArticle(normalizePost(fallbackPosts[0], 0));
   }
 }
 

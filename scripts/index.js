@@ -25,6 +25,70 @@ export default {
       return raw.split(/[|,]/).map(t => t.trim()).filter(Boolean);
     }
 
+    // 将 Notion rich_text 数组转换为 Markdown 行内格式
+    function richTextToMarkdown(items = []) {
+      return items.map(item => {
+        let text = item.plain_text || '';
+        const ann = item.annotations || {};
+        if (item.href) {
+          // 过滤 javascript: 伪协议以防止 XSS
+          const href = /^javascript:/i.test(item.href) ? '#' : item.href;
+          text = `[${text}](${href})`;
+        }
+        if (ann.code) text = `\`${text}\``;
+        if (ann.bold && ann.italic) text = `***${text}***`;
+        else if (ann.bold) text = `**${text}**`;
+        else if (ann.italic) text = `*${text}*`;
+        if (ann.strikethrough) text = `~~${text}~~`;
+        return text;
+      }).join('');
+    }
+
+    // 将 Notion blocks 数组转换为 Markdown 字符串
+    function blocksToMarkdown(blocks) {
+      const parts = [];
+      let inList = false;
+      for (const block of blocks) {
+        const type = block.type;
+        const isList = type === 'bulleted_list_item' || type === 'numbered_list_item';
+        let line;
+        if (type === 'heading_1') {
+          line = `# ${richTextToMarkdown(block.heading_1?.rich_text)}`;
+        } else if (type === 'heading_2') {
+          line = `## ${richTextToMarkdown(block.heading_2?.rich_text)}`;
+        } else if (type === 'heading_3') {
+          line = `### ${richTextToMarkdown(block.heading_3?.rich_text)}`;
+        } else if (type === 'paragraph') {
+          line = richTextToMarkdown(block.paragraph?.rich_text) || '';
+        } else if (type === 'quote') {
+          line = `> ${richTextToMarkdown(block.quote?.rich_text)}`;
+        } else if (type === 'callout') {
+          line = `> ${richTextToMarkdown(block.callout?.rich_text)}`;
+        } else if (type === 'bulleted_list_item') {
+          line = `- ${richTextToMarkdown(block.bulleted_list_item?.rich_text)}`;
+        } else if (type === 'numbered_list_item') {
+          line = `1. ${richTextToMarkdown(block.numbered_list_item?.rich_text)}`;
+        } else if (type === 'code') {
+          const lang = block.code?.language || '';
+          line = `\`\`\`${lang}\n${richTextToMarkdown(block.code?.rich_text)}\n\`\`\``;
+        } else if (type === 'divider') {
+          line = '---';
+        } else if (type === 'image') {
+          const url = block.image?.external?.url || block.image?.file?.url || '';
+          const caption = richTextToMarkdown(block.image?.caption);
+          line = `![${caption || 'image'}](${url})`;
+        } else {
+          continue;
+        }
+        if (parts.length > 0) {
+          parts.push(inList && isList ? '\n' : '\n\n');
+        }
+        parts.push(line);
+        inList = isList;
+      }
+      return parts.join('');
+    }
+
     // GET / → 健康检查
     if (url.pathname === '/') {
       return new Response(
@@ -152,8 +216,8 @@ export default {
       return new Response(JSON.stringify({ nodes, edges }), { headers: cors });
     }
 
-    // GET /posts/:id           → 仅正文块
-    // GET /posts/:id?full=true → 元数据 + 正文块
+    // GET /posts/:id           → 仅 Markdown 正文
+    // GET /posts/:id?full=true → 元数据 + Markdown 正文
     const match = url.pathname.match(/^\/posts\/(.+)$/);
     if (match) {
       const pageId = match[1];
@@ -166,7 +230,7 @@ export default {
         );
         const data = await res.json();
         if (!res.ok) return new Response(JSON.stringify({ error: data }), { status: 502, headers: cors });
-        return new Response(JSON.stringify(data.results), { headers: cors });
+        return new Response(JSON.stringify({ markdown: blocksToMarkdown(data.results) }), { headers: cors });
       }
 
       // full=true：并发请求元数据 + 正文块
@@ -191,7 +255,7 @@ export default {
           category: pageData.properties.Category?.select?.name ?? '',
           tags: parseTags(pageData.properties.Tags?.rich_text?.[0]?.plain_text),
         },
-        blocks: blocksData.results,
+        markdown: blocksToMarkdown(blocksData.results),
       }), { headers: cors });
     }
 
