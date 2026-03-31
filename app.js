@@ -302,12 +302,19 @@ function renderArticle(post) {
   // Assign IDs to headings and collect catalog entries
   const sections = [];
   let currentSection = null;
-  contentEl.querySelectorAll("h2, h3").forEach((heading, index) => {
+  contentEl.querySelectorAll("h1, h2, h3").forEach((heading, index) => {
     const id = `section-${index}`;
     heading.id = id;
-    if (heading.tagName === "H2") {
+    if (heading.tagName === "H1") {
       currentSection = { title: heading.textContent, sub: [], id };
       sections.push(currentSection);
+    } else if (heading.tagName === "H2") {
+      if (currentSection) {
+        currentSection.sub.push({ title: heading.textContent, id });
+      } else {
+        currentSection = { title: heading.textContent, sub: [], id };
+        sections.push(currentSection);
+      }
     } else if (heading.tagName === "H3" && currentSection) {
       currentSection.sub.push({ title: heading.textContent, id });
     }
